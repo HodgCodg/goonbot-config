@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hodgson Home Automation</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary: #0a0e1a;
+      --bg-secondary: #111827;
+      --bg-card: rgba(17, 24, 39, 0.7);
+      --bg-card-hover: rgba(17, 24, 39, 0.9);
+      --border-card: rgba(255, 255, 255, 0.06);
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent-blue: #3b82f6;
+      --accent-cyan: #06b6d4;
+      --accent-green: #10b981;
+      --accent-yellow: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-purple: #8b5cf6;
+      --accent-pink: #ec4899;
+      --accent-orange: #f97316;
+      --glow-blue: rgba(59, 130, 246, 0.15);
+      --glow-green: rgba(16, 185, 129, 0.15);
+      --glow-red: rgba(239, 68, 68, 0.15);
+      --skeleton-base: rgba(255, 255, 255, 0.04);
+      --skeleton-shine: rgba(255, 255, 255, 0.08);
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background:
+        radial-gradient(ellipse at 20% 50%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, rgba(6, 182, 212, 0.05) 0%, transparent 50%);
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    #root { position: relative; z-index: 1; }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.85); }
+    }
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @keyframes bar-fill {
+      from { width: 0%; }
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .card-enter { animation: fadeInUp 0.5s ease-out both; }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+    /* Skeleton loading */
+    .skeleton {
+      background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-shine) 50%, var(--skeleton-base) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s ease-in-out infinite;
+      border-radius: 6px;
+    }
+
+    /* Search bar */
+    .search-input {
+      width: 100%;
+      padding: 10px 16px 10px 40px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .search-input:focus {
+      border-color: rgba(59,130,246,0.4);
+      background: rgba(255,255,255,0.06);
+    }
+    .search-input::placeholder { color: var(--text-muted); }
+
+    /* Collapsible chevron */
+    .chevron {
+      transition: transform 0.25s ease;
+      cursor: pointer;
+      opacity: 0.5;
+    }
+    .chevron:hover { opacity: 1; }
+    .chevron.open { transform: rotate(180deg); }
+
+    /* Print styles */
+    @media print {
+      body { background: #fff !important; color: #000 !important; }
+      body::before { display: none; }
+      .no-print { display: none !important; }
+      .card-enter {
+        background: #fff !important;
+        border: 1px solid #ddd !important;
+        box-shadow: none !important;
+        break-inside: avoid;
+        color: #000;
+      }
+      .card-enter * { color: #000 !important; }
+      [style*="background: rgba"] { background: transparent !important; }
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 9999;
+      animation: fadeInUp 0.3s ease-out;
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.1);
+      max-width: 360px;
+    }
+    .toast-warning {
+      background: rgba(245,158,11,0.15);
+      color: var(--accent-yellow);
+      border-color: rgba(245,158,11,0.3);
+    }
+    .toast-error {
+      background: rgba(239,68,68,0.15);
+      color: var(--accent-red);
+      border-color: rgba(239,68,68,0.3);
+    }
+    .toast-info {
+      background: rgba(59,130,246,0.15);
+      color: var(--accent-blue);
+      border-color: rgba(59,130,246,0.3);
+    }
+
+    /* Sparkline canvas */
+    .sparkline-canvas {
+      display: block;
+      margin-top: 4px;
+    }
+
+    /* Keyboard focus visible */
+    *:focus-visible {
+      outline: 2px solid var(--accent-blue);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    /* Sort/filter toolbar */
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .toolbar-btn {
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .toolbar-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+    .toolbar-btn.active {
+      background: rgba(59,130,246,0.15);
+      border-color: rgba(59,130,246,0.3);
+      color: var(--accent-blue);
+    }
+  </style>
+</head>
+<body style="opacity:0;transition:opacity 0.3s">
+  <div id="root"></div>
+
+  <!-- Show loading immediately, before Babel transpiles -->
+  <script>
+    document.body.style.opacity = '1';
+    const root = document.getElementById('root');
+    root.innerHTML = '<div style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;color:#94a3b8;font-family:sans-serif;font-size:14px;gap:12px"><span>⚡ Loading dashboard...</span><span style="font-size:12px;color:#64748b">First load may take a moment</span></div>';
+  </script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef, useMemo } = React;
+
+    // ─── Icon Components ───
+    const Icons = {
+      Server: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+        </svg>
+      ),
+      Home: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+      ),
+      Shield: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      ),
+      Cpu: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/>
+        </svg>
+      ),
+      Box: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+      ),
+      Wrench: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+      ),
+      Leaf: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11 20A7 7 0 0 1 9.8 6.9C15.5 4.9 17 3.5 19 2c1 2 2 4.5 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>
+        </svg>
+      ),
+      Refresh: () => (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+      ),
+      Circle: () => (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+        </svg>
+      ),
+      Search: () => (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+      ),
+      ChevronDown: () => (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      ),
+      Download: () => (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      ),
+      Bell: () => (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+      ),
+      Wifi: () => (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>
+        </svg>
+      ),
+      WifiOff: () => (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>
+        </svg>
+      ),
+      Settings: () => (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      ),
+    };
+
+    // ─── Alert Thresholds ───
+    const DEFAULT_THRESHOLDS = { cpu: 85, memory: 90, disk: 90 };
+
+    // ─── Sparkline History Store ───
+    const MAX_HISTORY = 30;
+
+    // ─── Utility ───
+    function getBarColor(pct) {
+      if (pct >= 90) return 'var(--accent-red)';
+      if (pct >= 70) return 'var(--accent-yellow)';
+      if (pct >= 50) return 'var(--accent-blue)';
+      return 'var(--accent-green)';
+    }
+
+    function drawSparkline(canvas, data, color) {
+      if (!canvas || !data || data.length < 2) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
+
+      const max = Math.max(...data, 100);
+      const min = Math.min(...data, 0);
+      const range = max - min || 1;
+      const step = w / (data.length - 1);
+
+      // Use a fallback if the color is a CSS variable or invalid
+      const safeColor = color.startsWith('var') ? '#3b82f6' : color;
+
+      // gradient fill
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, safeColor + '55');
+      grad.addColorStop(1, 'transparent');
+
+      ctx.beginPath();
+      ctx.moveTo(0, h - ((data[0] - min) / range) * h);
+      for (let i = 1; i < data.length; i++) {
+        const x = i * step;
+        const y = h - ((data[i] - min) / range) * h;
+        ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = safeColor;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // fill
+      ctx.lineTo((data.length - 1) * step, h);
+      ctx.lineTo(0, h);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+
+    // ─── Skeleton Components ───
+    function SkeletonLine({ width = '100%', height = 12, style = {} }) {
+      return <div className="skeleton" style={{ width, height, ...style }} />;
+    }
+
+    function SkeletonCard({ delay = 0 }) {
+      return (
+        <div className="card-enter" style={{
+          background: 'var(--bg-card)',
+          backdropFilter: 'blur(20px)',
+          border: '1px solid var(--border-card)',
+          borderRadius: 16,
+          padding: '20px 22px',
+          animationDelay: `${delay}ms`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+            <SkeletonLine width={10} height={10} style={{ borderRadius: '50%' }} />
+            <SkeletonLine width={20} height={20} style={{ borderRadius: 4 }} />
+            <SkeletonLine width="60%" height={16} />
+          </div>
+          <SkeletonLine width="100%" height={8} style={{ marginBottom: 16 }} />
+          <SkeletonLine width="100%" height={8} style={{ marginBottom: 16 }} />
+          <SkeletonLine width="80%" height={8} style={{ marginBottom: 16 }} />
+          <SkeletonLine width="100%" height={6} style={{ marginBottom: 12 }} />
+          <SkeletonLine width="100%" height={6} />
+        </div>
+      );
+    }
+
+    // ─── Custom Hooks ───
+    function useDebounce(callback, delay) {
+      const timer = useRef();
+      return useCallback((...args) => {
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => {
+          callback(...args);
+        }, delay);
+      }, [callback, delay]);
+    }
+
+    // ─── Error Boundary ───
+
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+      }
+      static getDerivedStateFromError(error) { return { hasError: true, error }; }
+      componentDidCatch(error, errorInfo) { console.error("Dashboard Crash caught by Boundary:", error, errorInfo); }
+      render() {
+        if (this.state.hasError) {
+          return (
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              height: '100vh', color: 'var(--accent-red)', textAlign: 'center', padding: '20px',
+              background: 'var(--bg-primary)', fontFamily: 'inherit'
+            }}>
+              <Icons.Shield />
+              <h2 style={{ margin: '16px 0' }}>Dashboard Crash Detected</h2>
+              <p style={{ color: 'var(--text-secondary)', marginBottom: '24px', maxWidth: 400 }}>
+                Something went wrong during rendering. This prevents the entire page from going blank.
+              </p>
+              <button onClick={() => window.location.reload()} style={{
+                padding: '10px 20px', borderRadius: 8, background: 'var(--accent-blue)',
+                color: 'white', border: 'none', cursor: 'pointer', fontWeight: 600
+              }}>Reload Dashboard</button>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    function StatusDot({ online }) {
+      return (
+        <span
+          role="img"
+          aria-label={online ? 'Online' : 'Offline'}
+          style={{
+            display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+            background: online ? 'var(--accent-green)' : 'var(--accent-red)',
+            boxShadow: online ? '0 0 8px rgba(16,185,129,0.6)' : '0 0 8px rgba(239,68,68,0.6)',
+            animation: 'pulse-dot 2s ease-in-out infinite',
+            marginRight: 8, flexShrink: 0,
+          }}
+        />
+      );
+    }
+
+    function ProgressBar({ value, label, unit = '%', showValue = true, sparkData, sparkColor }) {
+      const pct = Math.min(Math.max(value || 0, 0), 100);
+      const color = getBarColor(pct);
+      const canvasRef = useRef(null);
+
+      // Map CSS variables to Hex for Canvas
+      const colorMap = {
+        'var(--accent-blue)': '#3b82f6',
+        'var(--accent-cyan)': '#06b6d4',
+        'var(--accent-green)': '#10b981',
+        'var(--accent-yellow)': '#f59e0b',
+        'var(--accent-red)': '#ef4444',
+        'var(--accent-purple)': '#8b5cf6',
+        'var(--accent-pink)': '#ec4899',
+        'var(--accent-orange)': '#f97316',
+      };
+      const safeSparkColor = sparkColor && colorMap[sparkColor] ? colorMap[sparkColor] : (sparkColor && !sparkColor.startsWith('var') ? sparkColor : '#3b82f6');
+
+      useEffect(() => {
+        if (sparkData && sparkData.length > 1 && canvasRef.current) {
+          drawSparkline(canvasRef.current, sparkData, safeSparkColor);
+        }
+      }, [sparkData, safeSparkColor]);
+
+      return (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 400 }}>{label}</span>
+            {showValue && <span style={{ fontSize: 13, fontWeight: 600, color }}>{pct}{unit}</span>}
+          </div>
+          <div style={{
+            height: 6, borderRadius: 3,
+            background: 'rgba(255,255,255,0.06)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%', borderRadius: 3,
+              width: `${pct}%`,
+              background: `linear-gradient(90deg, ${color}, ${color}dd)`,
+              boxShadow: pct >= 85 ? `0 0 10px ${color}66` : 'none',
+              transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+              animation: 'bar-fill 1s ease-out',
+            }} />
+          </div>
+          {sparkData && sparkData.length > 1 && (
+            <canvas
+              ref={canvasRef}
+              width={200}
+              height={28}
+              className="sparkline-canvas"
+              aria-label={`${label} trend over last ${sparkData.length} readings`}
+            />
+          )}
+        </div>
+      );
+    }
+
+    function MetricRow({ label, value, valueColor }) {
+      return (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '8px 0',
+          borderBottom: '1px solid rgba(255,255,255,0.04)',
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{label}</span>
+          <span style={{ fontSize: 13, fontWeight: 500, color: valueColor || 'var(--text-primary)' }}>{value}</span>
+        </div>
+      );
+    }
+
+    function DockerContainer({ name, status }) {
+      const isHealthy = status && (status.includes('healthy') || status.includes('Up'));
+      return (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '6px 10px', margin: '3px 0',
+          background: 'rgba(255,255,255,0.03)',
+          borderRadius: 6, fontSize: 12,
+        }}>
+          <span style={{ color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: isHealthy ? 'var(--accent-green)' : 'var(--accent-yellow)',
+              display: 'inline-block',
+            }} />
+            {name}
+          </span>
+          <span style={{ color: isHealthy ? 'var(--accent-green)' : 'var(--accent-yellow)', fontWeight: 500, fontSize: 11 }}>
+            {status}
+          </span>
+        </div>
+      );
+    }
+
+    function VMItem({ vmid, name }) {
+      return (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '6px 10px', margin: '3px 0',
+          background: 'rgba(255,255,255,0.03)',
+          borderRadius: 6, fontSize: 12,
+        }}>
+          <span style={{ color: 'var(--text-muted)' }}>VM {vmid}</span>
+          <span style={{ color: 'var(--accent-cyan)', fontWeight: 500 }}>{name}</span>
+        </div>
+      );
+    }
+
+    // ─── Toast Notification System ───
+    function ToastContainer({ toasts, onDismiss }) {
+      return (
+        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 9999, display: 'flex', flexDirection: 'column-reverse', gap: 8 }}>
+          {toasts.map(t => (
+            <div key={t.id} className={`toast toast-${t.type}`} onClick={() => onDismiss(t.id)} style={{ cursor: 'pointer' }}>
+              {t.message}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ─── Connection Status ───
+    function ConnectionBadge({ connected, consecutiveErrors }) {
+      return (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label={connected ? 'Connected to server' : `Disconnected - ${consecutiveErrors} failed attempts`}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '4px 12px', borderRadius: 20,
+            fontSize: 11, fontWeight: 500,
+            background: connected ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+            border: `1px solid ${connected ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)'}`,
+            color: connected ? 'var(--accent-green)' : 'var(--accent-red)',
+            transition: 'all 0.3s ease',
+          }}
+        >
+          {connected ? <Icons.Wifi /> : <Icons.WifiOff />}
+          {connected ? 'Connected' : `Reconnecting (${consecutiveErrors})`}
+        </div>
+      );
+    }
+
+    // ─── Card Wrapper with Collapse ───
+    function DashCard({ title, icon: IconEl, accent, online, delay = 0, collapsed, onToggle, children }) {
+      return (
+        <article
+          className="card-enter"
+          role="region"
+          aria-label={`${title} ${online === false ? '- Offline' : online === true ? '- Online' : ''}`}
+          style={{
+            background: 'var(--bg-card)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid var(--border-card)',
+            borderRadius: 16,
+            padding: '20px 22px',
+            animationDelay: `${delay}ms`,
+            transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
+            cursor: 'default',
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = `0 8px 32px rgba(0,0,0,0.3), 0 0 0 1px ${accent}22`;
+            e.currentTarget.style.borderColor = `${accent}33`;
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = 'none';
+            e.currentTarget.style.borderColor = 'var(--border-card)';
+          }}
+        >
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, height: 2,
+            background: `linear-gradient(90deg, transparent, ${accent}, transparent)`,
+            opacity: 0.6,
+          }} />
+
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: collapsed ? 0 : 16, gap: 10 }}>
+            {online !== undefined && <StatusDot online={online} />}
+            <div style={{ color: accent, display: 'flex', alignItems: 'center' }}>
+              <IconEl />
+            </div>
+            <h3 style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em', flex: 1 }}>{title}</h3>
+            {onToggle && (
+              <button
+                className={`chevron${collapsed ? '' : ' open'}`}
+                onClick={onToggle}
+                aria-expanded={!collapsed}
+                aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: 4, display: 'flex' }}
+              >
+                <Icons.ChevronDown />
+              </button>
+            )}
+          </div>
+
+          {!collapsed && (
+            <div style={{ animation: 'fadeIn 0.2s ease' }}>
+              {children}
+            </div>
+          )}
+        </article>
+      );
+    }
+
+    // ─── Card Content Components ───
+    function BotVMCard({ data, docker, collapsed, onToggle, history }) {
+      if (!data) return null;
+      return (
+        <DashCard title="BotVM" icon={Icons.Server} accent="var(--accent-blue)" online={true} delay={0} collapsed={collapsed} onToggle={onToggle}>
+          <MetricRow label="Uptime" value={data.uptime || '--'} valueColor="var(--accent-cyan)" />
+          <MetricRow label="Load Average" value={data.load_avg || '--'} valueColor="var(--accent-purple)" />
+          <div style={{ marginTop: 12 }} />
+          <ProgressBar value={data.cpu} label="CPU" sparkData={history?.cpu} sparkColor="var(--accent-blue)" />
+          <ProgressBar value={data.memory} label="Memory" sparkData={history?.memory} sparkColor="var(--accent-purple)" />
+          <ProgressBar value={data.disk} label="Disk" sparkData={history?.disk} sparkColor="var(--accent-cyan)" />
+          {docker && Array.isArray(docker.containers) && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Containers
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent-blue)' }}>{docker.count}</span>
+              </div>
+              {docker.containers.map((c, i) => <DockerContainer key={i} name={c.name} status={c.status} />)}
+            </div>
+          )}
+        </DashCard>
+      );
+    }
+
+    function HomeAssistantCard({ data, title, accent, delay, collapsed, onToggle }) {
+      if (!data) return null;
+      return (
+        <DashCard title={title || "Home Assistant"} icon={Icons.Home} accent={accent || "var(--accent-green)"} online={data.online} delay={delay || 50} collapsed={collapsed} onToggle={onToggle}>
+          <MetricRow label="Status" value={data.online ? 'Online' : 'Offline'} valueColor={data.online ? 'var(--accent-green)' : 'var(--accent-red)'} />
+          {data.entities !== undefined && <MetricRow label="Entities" value={(data.entities || 0).toLocaleString()} valueColor="var(--accent-cyan)" />}
+          {data.active_devices !== undefined && <MetricRow label="Active Devices" value={(data.active_devices || 0).toLocaleString()} valueColor="var(--accent-purple)" />}
+        </DashCard>
+      );
+    }
+
+    function PFSenseCard({ data, collapsed, onToggle }) {
+      const chartRef = useRef(null);
+      const chartInstance = useRef(null);
+
+      useEffect(() => {
+        if (!data || !data.online || !data.rx_history) return;
+
+        if (!chartInstance.current) {
+          const ctx = chartRef.current?.getContext('2d');
+          if (!ctx) return;
+
+          chartInstance.current = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: Array.from({length: data.rx_history.length}, (_, i) => i),
+              datasets: [
+                { label: 'RX Mbps', data: data.rx_history, borderColor: '#06b6d4', tension: 0.1, pointRadius: 0, borderWidth: 2, fill: false },
+                { label: 'TX Mbps', data: data.tx_history, borderColor: '#8b5cf6', tension: 0.1, pointRadius: 0, borderWidth: 2, fill: false }
+              ]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              animation: false,
+              scales: {
+                x: { display: false },
+                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', fontSize: 10 } }
+              },
+              plugins: {
+                legend: { labels: { color: '#94a3b8', fontSize: 10, boxWidth: 12 } }
+              }
+            }
+          });
+        } else {
+          chartInstance.current.data.labels = Array.from({length: data.rx_history.length}, (_, i) => i);
+          chartInstance.current.data.datasets[0].data = data.rx_history;
+          chartInstance.current.data.datasets[1].data = data.tx_history;
+          chartInstance.current.update('none');
+        }
+      }, [data]);
+
+      if (!data) return null;
+      return (
+        <DashCard title="TXPFSenseRouter" icon={Icons.Shield} accent="var(--accent-yellow)" online={data.online} delay={100} collapsed={collapsed} onToggle={onToggle}>
+          <MetricRow label="Status" value={data.online ? 'Online' : 'Offline'} valueColor={data.online ? 'var(--accent-green)' : 'var(--accent-red)'} />
+          <MetricRow label="WAN IP" value={data.wan_ip || '--'} valueColor="var(--text-primary)" />
+          {data.rx_mbps !== undefined && <MetricRow label="Download" value={`${data.rx_mbps} Mbps`} valueColor="var(--accent-cyan)" />}
+          {data.tx_mbps !== undefined && <MetricRow label="Upload" value={`${data.tx_mbps} Mbps`} valueColor="var(--accent-purple)" />}
+          <div style={{ height: 120, marginTop: 16 }}>
+            <canvas ref={chartRef} />
+          </div>
+        </DashCard>
+      );
+    }
+
+    function LinuxServerCard({ data, title, icon: IconComp, accent, delay, collapsed, onToggle, history }) {
+      if (!data) return null;
+      return (
+        <DashCard title={title} icon={IconComp || Icons.Server} accent={accent} online={data.online} delay={delay} collapsed={collapsed} onToggle={onToggle}>
+          {data.uptime && <MetricRow label="Uptime" value={data.uptime} valueColor="var(--accent-cyan)" />}
+          {data.cpu !== undefined && <ProgressBar value={data.cpu} label="CPU" sparkData={history?.cpu} sparkColor={accent} />}
+          {data.memory !== undefined && <ProgressBar value={data.memory} label="Memory" sparkData={history?.memory} sparkColor={accent} />}
+          {data.docker_containers && data.docker_containers.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Containers
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: accent }}>{data.docker_count}</span>
+              </div>
+              {data.docker_containers.map((c, i) => <DockerContainer key={i} name={c.name} status={c.status} />)}
+            </div>
+          )}
+        </DashCard>
+      );
+    }
+
+    function ProxmoxCard({ data, title, accent, delay, collapsed, onToggle, history }) {
+      if (!data) return null;
+      return (
+        <DashCard title={title} icon={Icons.Wrench} accent={accent} online={data.online} delay={delay} collapsed={collapsed} onToggle={onToggle}>
+          {data.uptime && <MetricRow label="Uptime" value={data.uptime} valueColor="var(--accent-cyan)" />}
+          {data.cpu !== undefined && <ProgressBar value={data.cpu} label="CPU" sparkData={history?.cpu} sparkColor={accent} />}
+          {data.memory !== undefined && <ProgressBar value={data.memory} label="Memory" sparkData={history?.memory} sparkColor={accent} />}
+          {data.vms && Array.isArray(data.vms) && data.vms.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Virtual Machines
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: accent }}>{data.vm_count}</span>
+              </div>
+              {data.vms.map((vm, i) => <VMItem key={i} vmid={vm.vmid} name={vm.name} />)}
+            </div>
+          )}
+        </DashCard>
+      );
+    }
+
+    function FarmPiCard({ data, collapsed, onToggle, history }) {
+      if (!data) return null;
+      return (
+        <DashCard title="FarmPi" icon={Icons.Leaf} accent="var(--accent-green)" online={data.online} delay={400} collapsed={collapsed} onToggle={onToggle}>
+          {data.uptime && <MetricRow label="Uptime" value={data.uptime} valueColor="var(--accent-cyan)" />}
+          {data.cpu !== undefined && <ProgressBar value={data.cpu} label="CPU" sparkData={history?.cpu} sparkColor="var(--accent-green)" />}
+          {data.memory !== undefined && <ProgressBar value={data.memory} label="Memory" sparkData={history?.memory} sparkColor="var(--accent-green)" />}
+        </DashCard>
+      );
+    }
+
+    // ─── Header ───
+    function Header({ onRefresh, lastUpdate, loading, connected, consecutiveErrors, searchQuery, onSearch, onExport, notificationsEnabled, onToggleNotifications, showSettings, onToggleSettings }) {
+      return (
+        <header style={{ textAlign: 'center', padding: '40px 20px 24px' }}>
+          <h1 style={{
+            fontSize: 28, fontWeight: 700,
+            background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-cyan), var(--accent-purple))',
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+            letterSpacing: '-0.02em', marginBottom: 6,
+          }}>
+            Hodgson Home Automation
+          </h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16, fontWeight: 400 }}>
+            System Monitoring & Health Check
+          </p>
+
+          {/* Controls row */}
+          <div className="no-print" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+            <ConnectionBadge connected={connected} consecutiveErrors={consecutiveErrors} />
+            <button onClick={onRefresh} aria-label="Refresh data" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '8px 18px', borderRadius: 8,
+              background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.25)',
+              color: 'var(--accent-blue)', fontSize: 13, fontWeight: 500,
+              cursor: 'pointer', transition: 'all 0.2s ease', fontFamily: 'inherit',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.12)'; }}>
+              <span style={{ display: 'inline-flex', animation: loading ? 'spin 1s linear infinite' : 'none' }}>
+                <Icons.Refresh />
+              </span>
+              Refresh
+            </button>
+            <button onClick={onExport} aria-label="Export JSON" title="Export status as JSON" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '8px 14px', borderRadius: 8,
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+              color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500,
+              cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: 'inherit',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}>
+              <Icons.Download /> Export
+            </button>
+            <button onClick={onToggleNotifications} aria-label={notificationsEnabled ? 'Disable alerts' : 'Enable alerts'} title={notificationsEnabled ? 'Alerts enabled' : 'Alerts disabled'} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '8px 14px', borderRadius: 8,
+              background: notificationsEnabled ? 'rgba(245,158,11,0.12)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${notificationsEnabled ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.08)'}`,
+              color: notificationsEnabled ? 'var(--accent-yellow)' : 'var(--text-secondary)',
+              fontSize: 12, fontWeight: 500, cursor: 'pointer', transition: 'all 0.15s ease', fontFamily: 'inherit',
+            }}>
+              <Icons.Bell /> {notificationsEnabled ? 'Alerts On' : 'Alerts Off'}
+            </button>
+            {lastUpdate && (
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Updated {lastUpdate}
+              </span>
+            )}
+          </div>
+
+          {/* Search */}
+          <div className="no-print" style={{ position: 'relative', maxWidth: 460, margin: '0 auto' }}>
+            <div style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>
+              <Icons.Search />
+            </div>
+            <input
+              className="search-input"
+              type="search"
+              placeholder="Search systems, containers, VMs..."
+              value={searchQuery}
+              onChange={e => onSearch(e.target.value)}
+              aria-label="Search dashboard"
+            />
+          </div>
+        </header>
+      );
+    }
+
+    // ─── Summary Bar ───
+    function SummaryBar({ data }) {
+      if (!data) return null;
+      const systems = [
+        data.botvm && 'botvm', data.homeassistant && 'ha', data.pfsense && 'pfs',
+        data.texasarm && 'arm', data.beloitproxmox && 'bpx', data.texasproxmox && 'tpx',
+        data.beloitha && 'bha', data.beloitorange && 'bo', data.farmpi && 'fp',
+      ].filter(Boolean);
+
+      const onlineCount = [
+        data.botvm,
+        data.homeassistant?.online, data.pfsense?.online,
+        data.texasarm?.online, data.beloitproxmox?.online, data.texasproxmox?.online,
+        data.beloitha?.online, data.beloitorange?.online, data.farmpi?.online,
+      ].filter(Boolean).length;
+
+      const offlineCount = systems.length - onlineCount;
+
+      return (
+        <div role="region" aria-label="System summary" style={{
+          display: 'flex', justifyContent: 'center', gap: 32,
+          padding: '14px 20px', margin: '0 auto 24px',
+          maxWidth: 700,
+          background: 'rgba(255,255,255,0.03)',
+          borderRadius: 12,
+          border: '1px solid rgba(255,255,255,0.05)',
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--accent-green)' }}>{onlineCount}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Online</div>
+          </div>
+          <div style={{ width: 1, background: 'rgba(255,255,255,0.08)' }} />
+          {offlineCount > 0 && (<>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--accent-red)' }}>{offlineCount}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Offline</div>
+            </div>
+            <div style={{ width: 1, background: 'rgba(255,255,255,0.08)' }} />
+          </>)}
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' }}>{systems.length}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Systems</div>
+          </div>
+          <div style={{ width: 1, background: 'rgba(255,255,255,0.08)' }} />
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--accent-cyan)' }}>
+              {(data.docker?.count || 0) + (data.texasarm?.docker_count || 0) + (data.beloitorange?.docker_count || 0)}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Containers</div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Sort/Filter Toolbar ───
+    function FilterToolbar({ sortBy, onSort, filterStatus, onFilterStatus }) {
+      return (
+        <div className="no-print toolbar" style={{ justifyContent: 'center', marginBottom: 20 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 4 }}>Sort:</span>
+          {['default', 'name', 'status'].map(s => (
+            <button
+              key={s}
+              className={`toolbar-btn${sortBy === s ? ' active' : ''}`}
+              onClick={() => onSort(s)}
+            >
+              {s === 'default' ? 'Default' : s === 'name' ? 'A-Z' : 'Status'}
+            </button>
+          ))}
+          <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.08)', margin: '0 4px' }} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 4 }}>Show:</span>
+          {['all', 'online', 'offline'].map(f => (
+            <button
+              key={f}
+              className={`toolbar-btn${filterStatus === f ? ' active' : ''}`}
+              onClick={() => onFilterStatus(f)}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    // ─── Main App ───
+    function App() {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [lastUpdate, setLastUpdate] = useState('');
+      const [error, setError] = useState(null);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [sortBy, setSortBy] = useState('default');
+      const [filterStatus, setFilterStatus] = useState('all');
+      const [collapsedCards, setCollapsedCards] = useState({});
+      const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+      const [toasts, setToasts] = useState([]);
+      const [connected, setConnected] = useState(true);
+      const [consecutiveErrors, setConsecutiveErrors] = useState(0);
+      const [showSettings, setShowSettings] = useState(false);
+      const historyRef = useRef({});
+      const prevDataRef = useRef(null);
+      const thresholds = useRef(DEFAULT_THRESHOLDS);
+      const recentAlertsRef = useRef(new Map());
+      const toastIdRef = useRef(0);
+
+
+      // Hide inline loader when React mounts
+      useEffect(() => {
+        document.body.style.opacity = '1';
+      }, []);
+
+      // Toast helper with deduplication to prevent spam
+      const addToast = useCallback((message, type = 'info') => {
+        // Prevent duplicate consecutive messages (e.g., CPU staying above threshold)
+        const recentToasts = toasts.filter(t => Date.now() - t.timestamp < 2000);
+        if (recentToasts.some(t => t.message === message)) return;
+
+        const id = ++toastIdRef.current;
+        setToasts(prev => [...prev.slice(-4), { id, message, type, timestamp: Date.now() }]);
+        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+      }, [toasts]);
+
+      const dismissToast = useCallback((id) => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, []);
+
+      // Record sparkline history
+      const recordHistory = useCallback((newData) => {
+        if (!newData) return;
+        const h = historyRef.current;
+        const track = (key, cpu, mem, disk) => {
+          if (!h[key]) h[key] = { cpu: [], memory: [], disk: [] };
+          if (cpu !== undefined) { h[key].cpu.push(cpu); if (h[key].cpu.length > MAX_HISTORY) h[key].cpu.shift(); }
+          if (mem !== undefined) { h[key].memory.push(mem); if (h[key].memory.length > MAX_HISTORY) h[key].memory.shift(); }
+          if (disk !== undefined) { h[key].disk.push(disk); if (h[key].disk.length > MAX_HISTORY) h[key].disk.shift(); }
+        };
+        if (newData.botvm) track('botvm', newData.botvm.cpu, newData.botvm.memory, newData.botvm.disk);
+        if (newData.texasarm) track('texasarm', newData.texasarm.cpu, newData.texasarm.memory);
+        if (newData.beloitproxmox) track('beloitproxmox', newData.beloitproxmox.cpu, newData.beloitproxmox.memory);
+        if (newData.texasproxmox) track('texasproxmox', newData.texasproxmox.cpu, newData.texasproxmox.memory);
+        if (newData.beloitorange) track('beloitorange', newData.beloitorange.cpu, newData.beloitorange.memory);
+        if (newData.farmpi) track('farmpi', newData.farmpi.cpu, newData.farmpi.memory);
+      }, []);
+
+      // Alert threshold checking with deduplication
+      const checkAlerts = useCallback((newData) => {
+        if (!notificationsEnabled || !newData) return;
+        const th = thresholds.current;
+        const alerts = new Set();
+        
+        const now = Date.now();
+        // Clean up old alerts (older than 60s)
+        for (const [key, time] of recentAlertsRef.current.entries()) {
+          if (now - time > 60000) recentAlertsRef.current.delete(key);
+        }
+        
+        const check = (name, vals) => {
+          if (vals.cpu !== undefined && vals.cpu >= th.cpu) {
+            const key = `${name}-cpu-${Math.floor(vals.cpu/10)*10}`;
+            if (!recentAlertsRef.current.has(key)) {
+              alerts.add(`${name} CPU at ${vals.cpu}%`);
+              recentAlertsRef.current.set(key, now);
+            }
+          }
+          if (vals.memory !== undefined && vals.memory >= th.memory) {
+            const key = `${name}-mem-${Math.floor(vals.memory/10)*10}`;
+            if (!recentAlertsRef.current.has(key)) {
+              alerts.add(`${name} Memory at ${vals.memory}%`);
+              recentAlertsRef.current.set(key, now);
+            }
+          }
+          if (vals.disk !== undefined && vals.disk >= th.disk) {
+            const key = `${name}-disk-${Math.floor(vals.disk/10)*10}`;
+            if (!recentAlertsRef.current.has(key)) {
+              alerts.add(`${name} Disk at ${vals.disk}%`);
+              recentAlertsRef.current.set(key, now);
+            }
+          }
+        };
+
+        if (newData.botvm) check('BotVM', newData.botvm);
+        if (newData.texasarm) check('TexasArm', newData.texasarm);
+        if (newData.beloitorange) check('BeloitOrange', newData.beloitorange);
+        if (newData.farmpi) check('FarmPi', newData.farmpi);
+        if (newData.beloitproxmox) check('BeloitProxMox', newData.beloitproxmox);
+        if (newData.texasproxmox) check('TexasProxMox', newData.texasproxmox);
+
+        // Check for status changes (these don't need rate limiting)
+        const prev = prevDataRef.current;
+        if (prev) {
+          const systems = ['homeassistant', 'pfsense', 'texasarm', 'beloitproxmox', 'texasproxmox', 'beloitha', 'beloitorange', 'farmpi'];
+          const names = { homeassistant: 'HA TX', pfsense: 'PFSense', texasarm: 'TexasArm', beloitproxmox: 'BeloitProxMox', texasproxmox: 'TexasProxMox', beloitha: 'Beloit HA', beloitorange: 'BeloitOrange', farmpi: 'FarmPi' };
+          systems.forEach(s => {
+            if (prev[s]?.online === true && newData[s]?.online === false) {
+              alerts.add(`${names[s]} went OFFLINE`);
+            } else if (prev[s]?.online === false && newData[s]?.online === true) {
+              addToast(`${names[s]} is back online`, 'info');
+            }
+          });
+        }
+
+        alerts.forEach(a => {
+          addToast(a, a.includes('OFFLINE') ? 'error' : 'warning');
+          if ('Notification' in window && Notification.permission === 'granted') {
+            try { new Notification('HHA Dashboard Alert', { body: a, icon: '/favicon.ico' }); } catch(e) {}
+          }
+        });
+      }, [notificationsEnabled, addToast]);
+
+      // Toggle notifications + request permission
+      const handleToggleNotifications = useCallback(() => {
+        if (!notificationsEnabled && 'Notification' in window && Notification.permission === 'default') {
+          Notification.requestPermission();
+        }
+        setNotificationsEnabled(v => !v);
+      }, [notificationsEnabled]);
+
+      // Fetch data with reconnect logic
+      const fetchData = useCallback(() => {
+        setLoading(true);
+        fetch('/api/status')
+          .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+          .then(d => {
+            prevDataRef.current = data;
+            setData(d);
+            setError(null);
+            setConnected(true);
+            setConsecutiveErrors(0);
+            setLastUpdate(new Date().toLocaleTimeString());
+            recordHistory(d);
+            checkAlerts(d);
+          })
+          .catch(e => {
+            setError(e.message);
+            setConnected(false);
+            setConsecutiveErrors(prev => prev + 1);
+          })
+          .finally(() => setLoading(false));
+      }, [data, recordHistory, checkAlerts]);
+
+      useEffect(() => {
+        fetchData();
+        const interval = setInterval(fetchData, 10000);
+        return () => clearInterval(interval);
+      }, [fetchData]);
+
+      // Refetch when reconnecting after errors (exponential backoff)
+      useEffect(() => {
+        if (consecutiveErrors > 0 && consecutiveErrors <= 5) {
+          const backoff = Math.min(consecutiveErrors * 5000, 30000);
+          const timer = setTimeout(fetchData, backoff);
+          return () => clearTimeout(timer);
+        }
+      }, [consecutiveErrors]);
+
+      // JSON export
+      const handleExport = useCallback(() => {
+        if (!data) return;
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `hha-status-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        addToast('Status exported as JSON', 'info');
+      }, [data, addToast]);
+
+      // Toggle collapse with debounce to prevent rapid-fire issues
+      const toggleCard = useCallback((key) => {
+        setCollapsedCards(prev => ({ ...prev, [key]: !prev[key] }));
+      }, []);
+
+      const debouncedToggle = useDebounce(toggleCard, 150);
+
+      // Card definitions for sorting/filtering/searching
+      const cardDefs = useMemo(() => {
+        if (!data) return [];
+        return [
+          { key: 'botvm', title: 'BotVM', online: true, searchTerms: 'botvm bot vm server docker containers' },
+          { key: 'homeassistant', title: 'Home Assistant (TX)', online: data.homeassistant?.online, searchTerms: 'home assistant ha texas tx entities devices' },
+          { key: 'TXPFSenseRouter', title: 'TXPFSenseRouter', online: data.TXPFSenseRouter?.online, searchTerms: 'pfsense router firewall wan ip' },
+          { key: 'texasarm', title: 'TexasServerArm', online: data.texasarm?.online, searchTerms: 'texas arm server docker linux' },
+          { key: 'beloitproxmox', title: 'BeloitProxMox', online: data.beloitproxmox?.online, searchTerms: 'beloit proxmox vm virtual machine' },
+          { key: 'texasproxmox', title: 'TexasProxMox', online: data.texasproxmox?.online, searchTerms: 'texas proxmox vm virtual machine' },
+          { key: 'beloitha', title: 'Beloit HA', online: data.beloitha?.online, searchTerms: 'beloit home assistant ha entities devices' },
+          { key: 'beloitorange', title: 'BeloitOrangePi5', online: data.beloitorange?.online, searchTerms: 'beloit orange pi docker linux' },
+          { key: 'farmpi', title: 'FarmPi', online: data.farmpi?.online, searchTerms: 'farm pi raspberry linux' },
+          { key: 'BeloitOrangePiZero3', title: 'BeloitOrangePiZero3', online: data.BeloitOrangePiZero3?.online, searchTerms: 'beloit orange pi zero 3 linux' },
+          { key: 'FarmPi2', title: 'FarmPi2', online: data.FarmPi2?.online, searchTerms: 'farm pi 2 raspberry linux' },
+        ];
+      }, [data]);
+
+      // Filter and sort
+      const visibleCards = useMemo(() => {
+        let cards = [...cardDefs];
+        const q = searchQuery.toLowerCase().trim();
+        if (q) {
+          cards = cards.filter(c =>
+            c.title.toLowerCase().includes(q) ||
+            c.searchTerms.includes(q) ||
+            // Search docker containers
+            (data?.docker?.containers || []).some(dc => dc.name.toLowerCase().includes(q)) && c.key === 'botvm' ||
+            (data?.[c.key]?.docker_containers || []).some(dc => dc.name.toLowerCase().includes(q)) ||
+            (data?.[c.key]?.vms || []).some(vm => vm.name.toLowerCase().includes(q))
+          );
+        }
+        if (filterStatus === 'online') cards = cards.filter(c => c.online);
+        if (filterStatus === 'offline') cards = cards.filter(c => c.online === false);
+        if (sortBy === 'name') cards.sort((a, b) => a.title.localeCompare(b.title));
+        if (sortBy === 'status') cards.sort((a, b) => (a.online === b.online ? 0 : a.online ? -1 : 1));
+        return cards;
+      }, [cardDefs, searchQuery, filterStatus, sortBy, data]);
+
+      // Render card by key - memoized to prevent unnecessary re-renders
+      const renderCard = useCallback((cardDef) => {
+        const h = historyRef.current;
+        const isCollapsed = collapsedCards[cardDef.key];
+        
+        switch (cardDef.key) {
+          case 'botvm': return <BotVMCard key="botvm" data={data.botvm} docker={data.docker} history={h.botvm} collapsed={isCollapsed} onToggle={() => debouncedToggle('botvm')} />;
+          case 'homeassistant': return <HomeAssistantCard key="ha" data={data.homeassistant} title="Home Assistant (TX)" accent="var(--accent-green)" delay={50} collapsed={isCollapsed} onToggle={() => debouncedToggle('homeassistant')} />;
+          case 'TXPFSenseRouter': return <PFSenseCard key="pfs" data={data.TXPFSenseRouter} collapsed={isCollapsed} onToggle={() => debouncedToggle('TXPFSenseRouter')} />;
+          case 'BeloitOrangePiZero3': return <LinuxServerCard key="opizero" data={data.BeloitOrangePiZero3} title="BeloitOrangePiZero3" icon={Icons.Circle} accent="var(--accent-orange)" delay={380} history={h.BeloitOrangePiZero3} collapsed={isCollapsed} onToggle={() => debouncedToggle('BeloitOrangePiZero3')} />;
+          case 'FarmPi2': return <LinuxServerCard key="farmpi2" data={data.FarmPi2} title="FarmPi2" icon={Icons.Leaf} accent="var(--accent-green)" delay={420} history={h.FarmPi2} collapsed={isCollapsed} onToggle={() => debouncedToggle('FarmPi2')} />;
+          case 'texasarm': return <LinuxServerCard key="arm" data={data.texasarm} title="TexasServerArm" icon={Icons.Cpu} accent="var(--accent-purple)" delay={150} history={h.texasarm} collapsed={isCollapsed} onToggle={() => debouncedToggle('texasarm')} />;
+          case 'beloitproxmox': return <ProxmoxCard key="bpx" data={data.beloitproxmox} title="BeloitProxMox" accent="var(--accent-orange)" delay={200} history={h.beloitproxmox} collapsed={isCollapsed} onToggle={() => debouncedToggle('beloitproxmox')} />;
+          case 'texasproxmox': return <ProxmoxCard key="tpx" data={data.texasproxmox} title="TexasProxMox" accent="var(--accent-pink)" delay={250} history={h.texasproxmox} collapsed={isCollapsed} onToggle={() => debouncedToggle('texasproxmox')} />;
+          case 'beloitha': return <HomeAssistantCard key="bha" data={data.beloitha} title="Beloit HA" accent="var(--accent-cyan)" delay={300} collapsed={isCollapsed} onToggle={() => debouncedToggle('beloitha')} />;
+          case 'beloitorange': return <LinuxServerCard key="bo" data={data.beloitorange} title="BeloitOrangePi5" icon={Icons.Circle} accent="var(--accent-orange)" delay={350} history={h.beloitorange} collapsed={isCollapsed} onToggle={() => debouncedToggle('beloitorange')} />;
+          case 'farmpi': return <FarmPiCard key="fp" data={data.farmpi} history={h.farmpi} collapsed={isCollapsed} onToggle={() => debouncedToggle('farmpi')} />;
+          default: return null;
+        }
+      }, [collapsedCards, data, debouncedToggle, historyRef]);
+
+      return (
+        <ErrorBoundary>
+          <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 20px 40px' }} role="main">
+            <Header
+              onRefresh={fetchData}
+              lastUpdate={lastUpdate}
+              loading={loading}
+              connected={connected}
+              consecutiveErrors={consecutiveErrors}
+              searchQuery={searchQuery}
+              onSearch={setSearchQuery}
+              onExport={handleExport}
+              notificationsEnabled={notificationsEnabled}
+              onToggleNotifications={handleToggleNotifications}
+              showSettings={showSettings}
+              onToggleSettings={() => setShowSettings(v => !v)}
+            />
+    
+            {error && !data && (
+              <div role="alert" style={{
+                textAlign: 'center', padding: '12px 20px', margin: '0 auto 20px', maxWidth: 400,
+                background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
+                borderRadius: 8, color: 'var(--accent-red)', fontSize: 13,
+              }}>
+                Connection error: {error}
+              </div>
+            )}
+    
+            {/* Loading skeletons */}
+            {!data && !error && (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+                gap: 16, marginTop: 24,
+              }}>
+                {[0,1,2,3,4,5,6,7,8].map(i => <SkeletonCard key={i} delay={i * 60} />)}
+              </div>
+            )}
+    
+            {data && <SummaryBar data={data} />}
+    
+            {data && (
+              <FilterToolbar
+                sortBy={sortBy}
+                onSort={setSortBy}
+                filterStatus={filterStatus}
+                onFilterStatus={setFilterStatus}
+              />
+            )}
+    
+            {data && (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+                gap: 16,
+              }}>
+                {visibleCards.map(c => renderCard(c))}
+              </div>
+            )}
+    
+            {data && visibleCards.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)', fontSize: 14 }}>
+                No systems match your search or filter.
+              </div>
+            )}
+    
+            <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+          </div>
+        </ErrorBoundary>
+      );
+    }
+
+    try {
+      ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    } catch (e) {
+      console.error("FATAL RENDER ERROR:", e);
+      document.getElementById('root').innerHTML = `
+        <div style="color:red; padding:20px; font-family:sans-serif;">
+          <h2>Fatal Dashboard Render Error</h2>
+          <pre>${e.message}</pre>
+          <p>Please check browser console for full stack trace.</p>
+        </div>
+      `;
+    }
+  </script>
+</body>
+</html>
