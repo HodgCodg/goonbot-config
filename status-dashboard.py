@@ -43,6 +43,10 @@ pfsense_metrics = {
     'tx_window': []
 }
 WINDOW_SIZE = 4500 # 15 minutes at 0.2s polling
+
+# Global store for system metrics history
+system_metrics = {}
+SYSTEM_WINDOW_SIZE = 90 # 15 minutes at 10s polling
 metrics_lock = threading.Lock()
 
 def bandwidth_worker():
@@ -808,6 +812,18 @@ def get_status():
             disk_parts = lines[1].split()
             data['disk'] = int(disk_parts[4].replace('%', ''))
         except: pass
+
+        # Update History
+        with metrics_lock:
+            if 'botvm' not in system_metrics:
+                system_metrics['botvm'] = {'cpu': [], 'memory': []}
+            system_metrics['botvm']['cpu'].append(data['cpu'])
+            system_metrics['botvm']['memory'].append(data['memory'])
+            if len(system_metrics['botvm']['cpu']) > SYSTEM_WINDOW_SIZE:
+                system_metrics['botvm']['cpu'].pop(0)
+            if len(system_metrics['botvm']['memory']) > SYSTEM_WINDOW_SIZE:
+                system_metrics['botvm']['memory'].pop(0)
+        
         return data
     
     def fetch_homeassistant():
@@ -932,6 +948,17 @@ def get_status():
             if len(mem_parts) >= 3:
                 data['memory'] = (int(mem_parts[2]) * 100 // int(mem_parts[1]))
             
+            # Update History
+            with metrics_lock:
+                if system_key not in system_metrics:
+                    system_metrics[system_key] = {'cpu': [], 'memory': []}
+                system_metrics[system_key]['cpu'].append(data.get('cpu', 0))
+                system_metrics[system_key]['memory'].append(data.get('memory', 0))
+                if len(system_metrics[system_key]['cpu']) > SYSTEM_WINDOW_SIZE:
+                    system_metrics[system_key]['cpu'].pop(0)
+                if len(system_metrics[system_key]['memory']) > SYSTEM_WINDOW_SIZE:
+                    system_metrics[system_key]['memory'].pop(0)
+
             # Docker containers if requested
             if config.get('has_docker'):
                 stdin, stdout, stderr = client.exec_command('docker ps --format "{{.Names}}\t{{.Status}}"')
@@ -954,7 +981,7 @@ def get_status():
                     for line in vms_output.split('\n'):
                         parts = line.split()
                         if len(parts) >= 3:
-                            vm_list.append({'vmid': parts[0], 'name': parts[1]})
+                            vm_list.append({'vmid': parts[0], 'name': parts[1], 'cpu': 0, 'memory': 0})
                     data['vms'] = vm_list
                     data['vm_count'] = len(vm_list)
             
@@ -1033,6 +1060,10 @@ def get_status():
                 summary_areas = {area: len(entities) for area, entities in value.items()}
                 status['ha_areas_summary'] = summary_areas
             elif key != 'docker':
+                # Inject history for any system that has it
+                if key in system_metrics:
+                    value['cpu_history'] = system_metrics[key]['cpu']
+                    value['memory_history'] = system_metrics[key]['memory']
                 status[key] = value
     
     return jsonify(status)
