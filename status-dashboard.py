@@ -816,13 +816,16 @@ def get_status():
         # Update History
         with metrics_lock:
             if 'botvm' not in system_metrics:
-                system_metrics['botvm'] = {'cpu': [], 'memory': []}
+                system_metrics['botvm'] = {'cpu': [], 'memory': [], 'disk': []}
             system_metrics['botvm']['cpu'].append(data['cpu'])
             system_metrics['botvm']['memory'].append(data['memory'])
+            system_metrics['botvm']['disk'].append(data['disk'])
             if len(system_metrics['botvm']['cpu']) > SYSTEM_WINDOW_SIZE:
                 system_metrics['botvm']['cpu'].pop(0)
             if len(system_metrics['botvm']['memory']) > SYSTEM_WINDOW_SIZE:
                 system_metrics['botvm']['memory'].pop(0)
+            if len(system_metrics['botvm']['disk']) > SYSTEM_WINDOW_SIZE:
+                system_metrics['botvm']['disk'].pop(0)
         
         return data
     
