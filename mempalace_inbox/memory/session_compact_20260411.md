@@ -1,0 +1,3 @@
+- Task: TASK-016 Camaro CAN-Bridge. Goal: Convert Holley Terminator X CAN data to 1982 Camaro analog gauges. Technicals: 1982 gauges are resistance-based (Ohms), requiring MCP41010 Digital Potentiometers. Holley CAN requires "Racepak" mode and ID masking (AND 0xFFFFF800) to handle unique device serials. HW: ESP32 + SN65HVD230 Transceiver + 3x Digipots + MOSFETs.
+- Dashboard: Added time-series sparkline graphing for CPU and Memory to all server cards in the React dashboard. Fixed BotVM disk history tracking. Pushed updates to github.com/HodgCodg/goonbot-config as Zach Hodgson.
+- System State: BotVM health audit (TASK-017) completed 2026-04-11. All systems (Ollama, OpenClaw, Disk, Network) are nominal.

@@ -1,0 +1,31 @@
+# HEARTBEAT.md
+# GoonBot Autonomous Task Runner — fires every 5 minutes.
+# Reply HEARTBEAT_OK (alone) only when there is truly nothing to do.
+
+tasks:
+  - name: task-check
+    interval: 5m
+    prompt: |
+      Read /home/botvm/.openclaw/workspace/TODO.md using exec. Then act:
+
+      === IF pending tasks exist ===
+      1. Pick the highest-priority pending task (critical > high > normal > low).
+      2. Using exec, write the updated TODO.md immediately: set status=in-progress, started_at=now.
+      3. Execute the task. Use exec to run commands, read files, write files. Do real work.
+      4. Do NOT narrate. Do NOT say "I will" or "Let me". Run the exec call directly.
+      5. After completing, using exec write TODO.md again: status=done, completed_at=now, result=<summary>.
+      6. If more pending tasks remain, loop back to step 1 immediately — do NOT stop between tasks.
+      7. Only after all tasks are done (or 20+ minutes of continuous work): send one Telegram summary.
+
+      === IF only in-progress tasks exist ===
+      - If started_at is within the last 4 hours: the task is actively running. Reply HEARTBEAT_OK.
+      - If started_at is older than 4 hours: it stalled. Reset to pending using exec, then pick it up.
+
+      === IF no pending or stalled tasks ===
+      Reply HEARTBEAT_OK.
+
+      RULES:
+      - Never stop mid-task to ask for confirmation.
+      - Never send a progress update unless Zach explicitly asked.
+      - Tool calls must follow text. If you write "now I will exec X", your very next action must be that exec call.
+      - Complete the full chain before stopping.

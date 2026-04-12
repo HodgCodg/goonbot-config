@@ -1,0 +1,18 @@
+wing: workspace
+rooms:
+- name: scripts
+  description: Files from scripts/
+- name: static
+  description: Files from static/
+- name: memory
+  description: Files from memory/
+- name: proposed
+  description: Files from proposed/
+- name: mempalace
+  description: Files from mempalace/
+- name: procedures
+  description: Files from procedures/
+- name: skills
+  description: Files from skills/
+- name: general
+  description: Files that don't fit other rooms

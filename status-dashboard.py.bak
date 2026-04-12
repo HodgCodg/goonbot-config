@@ -1,0 +1,853 @@
+#!/usr/bin/env python3
+"""
+BotVM Status Dashboard Server
+Monitors BotVM, Home Assistant, PFSense and provides a web interface
+"""
+
+import subprocess
+import json
+import requests
+from flask import Flask, render_template_string, jsonify
+import os
+import paramiko
+
+app = Flask(__name__)
+
+# Configuration - Using Tailscale IPs for remote systems
+CONFIG = {
+    'botvm': {'ip': '10.11.0.114', 'hostname': 'BotVM'},
+    'homeassistant': {'ip': '10.11.0.173', 'port': 8123, 'token': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjZDc2MGFjM2U5ZDg0NzUzYWZkNGJmMTAzOTZmODRmZiIsImlhdCI6MTc3NDc1MTQ1MiwiZXhwIjoyMDkwMTExNDUyfQ.8IM5Mew_fVfnIYnX1aw7e7l_mrt4OOuoU9zgSE8H-zI'},
+    'pfsense': {'ip': '10.11.0.1'},  # Typical router IP
+    'beloitproxmox': {'ip': '100.96.219.118', 'port': 8006, 'type': 'proxmox', 'username': 'root', 'password': 'Rockyrocks1$'},
+    'texasproxmox': {'ip': '10.11.0.2', 'port': 8006, 'type': 'proxmox', 'username': 'root', 'password': 'Rockyrocks1$'},
+    'beloitha': {'ip': '100.77.215.26', 'port': 8123, 'token': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJkMzFhNmE3MzY0N2I0NGZmODMxZGQwYzg3OTJmYzhmZSIsImlhdCI6MTc3NDkxNDMyNywiZXhwIjoyMDkwMjc0MzI3fQ.nkG-8Ef1c2JO0XvzQ-QBe5TmnVa-fDRlXC40XaAN8xk'},
+    'beloitorange': {'ip': '100.77.215.26', 'type': 'system', 'username': 'ubuntu', 'password': 'Rockyrocks1$', 'has_docker': True},
+    'farmpi': {'ip': '100.117.163.3', 'type': 'system', 'username': 'hha', 'password': 'Rockyrocks1$'},
+    'texasarm': {'ip': '10.11.0.173', 'type': 'system', 'username': 'ubuntu', 'password': 'Rockyrocks1$', 'has_docker': True},
+}
+
+DASHBOARD_HTML = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hodgson Home Automation Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        header {
+            text-align: center;
+            padding: 30px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 30px;
+        }
+        h1 { font-size: 2.5em; color: #4fc3f7; text-shadow: 0 0 20px rgba(79,195,247,0.5); }
+        .refresh-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 15px;
+        }
+        .refresh-btn:hover { transform: scale(1.05); transition: transform 0.2s; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 16px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .card-header h2 { font-size: 1.4em; color: #fff; flex-grow: 1; }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-online { background: #4caf50; box-shadow: 0 0 10px #4caf50; }
+        .status-offline { background: #f44336; box-shadow: 0 0 10px #f44336; }
+        .status-warning { background: #ff9800; box-shadow: 0 0 10px #ff9800; }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .metric:last-child { border-bottom: none; }
+        .metric-label { color: #aaa; font-size: 0.9em; }
+        .metric-value { color: #4fc3f7; font-weight: 600; }
+        .progress-bar {
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            height: 8px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            border-radius: 8px;
+            transition: width 0.3s ease;
+        }
+        .progress-cpu { background: linear-gradient(90deg, #667eea, #764ba2); }
+        .progress-mem { background: linear-gradient(90deg, #f093fb, #f5576c); }
+        .progress-disk { background: linear-gradient(90deg, #4facfe, #00f2fe); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .loading { animation: pulse 1s infinite; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏠 Hodgson Home Automation Dashboard</h1>
+            <p style="color: #aaa; margin-top: 10px;">System Monitoring & Health Check</p>
+            <button class="refresh-btn" onclick="updateAll()">↻ Refresh All</button>
+        </header>
+
+        <!-- BotVM Status (Combined) -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <span id="botvm-status" class="status-indicator status-online"></span>
+                    <h2>🖥️ BotVM (10.11.0.114)</h2>
+                </div>
+                <div id="botvm-content">
+                    <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value" id="uptime">--</span></div>
+                    <div class="metric"><span class="metric-label">CPU Usage</span><span class="metric-value" id="cpu-percent">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-cpu" id="cpu-bar" style="width: 0%"></div></div>
+                    <div class="metric"><span class="metric-label">Memory Usage</span><span class="metric-value" id="mem-percent">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-mem" id="mem-bar" style="width: 0%"></div></div>
+                    <div class="metric"><span class="metric-label">Disk Usage</span><span class="metric-value" id="disk-percent">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-disk" id="disk-bar" style="width: 0%"></div></div>
+                    <div class="metric"><span class="metric-label">Load Average</span><span class="metric-value" id="load-avg">--</span></div>
+                    <hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">
+                    <div class="metric"><span class="metric-label">Docker Containers</span><span class="metric-value" id="docker-count">--</span></div>
+                    <div id="docker-list"></div>
+                </div>
+            </div>
+
+            <!-- Home Assistant Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span id="ha-status" class="status-indicator status-online"></span>
+                    <h2>🏠 Home Assistant (10.11.0.173)</h2>
+                </div>
+                <div id="ha-content">
+                    <div class="metric"><span class="metric-label">Status</span><span class="metric-value" id="ha-status-text">--</span></div>
+                    <div class="metric"><span class="metric-label">Entities</span><span class="metric-value" id="ha-entities">--</span></div>
+                    <div class="metric"><span class="metric-label">Active Devices</span><span class="metric-value" id="ha-devices">--</span></div>
+                </div>
+            </div>
+
+            <!-- PFSense Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span id="pfs-status" class="status-indicator status-online"></span>
+                    <h2>🛡️ PFSense Router</h2>
+                </div>
+                <div id="pfs-content">
+                    <div class="metric"><span class="metric-label">Status</span><span class="metric-value" id="pfs-status-text">--</span></div>
+                    <div class="metric"><span class="metric-label">WAN IP</span><span class="metric-value" id="pfs-wan-ip">--</span></div>
+                </div>
+            </div>
+
+            <!-- TexasServerARM Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span id="texasarm-status" class="status-indicator status-online"></span>
+                    <h2>📱 TexasServerArm (10.11.0.173)</h2>
+                </div>
+                <div id="texasarm-content">
+                    <div class="metric"><span class="metric-label">Status</span><span class="metric-value" id="texasarm-status-text">--</span></div>
+                    <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value" id="texasarm-uptime">--</span></div>
+                    <div class="metric"><span class="metric-label">CPU Usage</span><span class="metric-value" id="texasarm-cpu">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-cpu" id="texasarm-cpu-bar" style="width: 0%"></div></div>
+                    <div class="metric"><span class="metric-label">Memory Usage</span><span class="metric-value" id="texasarm-mem">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-mem" id="texasarm-mem-bar" style="width: 0%"></div></div>
+                    <hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">
+                    <div class="metric"><span class="metric-label">Docker Containers</span><span class="metric-value" id="texasarm-docker-count">--</span></div>
+                    <div id="texasarm-docker-list"></div>
+                </div>
+            </div>
+
+            <!-- Beloit Proxmox Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span id="proxmox-status" class="status-indicator status-online"></span>
+                    <h2>🔧 BeloitProxMox (Tailscale)</h2>
+                </div>
+                <div id="proxmox-content">
+                    <div class="metric"><span class="metric-label">Status</span><span class="metric-value" id="proxmox-status-text">--</span></div>
+                    <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value" id="proxmox-uptime">--</span></div>
+                    <div class="metric"><span class="metric-label">CPU Usage</span><span class="metric-value" id="proxmox-cpu">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-cpu" id="proxmox-cpu-bar" style="width: 0%"></div></div>
+                    <div class="metric"><span class="metric-label">Memory Usage</span><span class="metric-value" id="proxmox-mem">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-mem" id="proxmox-mem-bar" style="width: 0%"></div></div>
+                    <hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">
+                    <div class="metric"><span class="metric-label">Active VMs</span><span class="metric-value" id="proxmox-vm-count">--</span></div>
+                    <div id="proxmox-vm-list"></div>
+                </div>
+            </div>
+
+            <!-- TexasProxMox Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span id="texasproxmox-status" class="status-indicator status-online"></span>
+                    <h2>🔧 TexasProxMox (10.11.0.2)</h2>
+                </div>
+                <div id="texasproxmox-content">
+                    <div class="metric"><span class="metric-label">Status</span><span class="metric-value" id="texasproxmox-status-text">--</span></div>
+                    <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value" id="texasproxmox-uptime">--</span></div>
+                    <div class="metric"><span class="metric-label">CPU Usage</span><span class="metric-value" id="texasproxmox-cpu">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-cpu" id="texasproxmox-cpu-bar" style="width: 0%"></div></div>
+                    <div class="metric"><span class="metric-label">Memory Usage</span><span class="metric-value" id="texasproxmox-mem">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-mem" id="texasproxmox-mem-bar" style="width: 0%"></div></div>
+                    <hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">
+                    <div class="metric"><span class="metric-label">Active VMs</span><span class="metric-value" id="texasproxmox-vm-count">--</span></div>
+                    <div id="texasproxmox-vm-list"></div>
+                </div>
+            </div>
+
+            <!-- Beloit HA Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span id="beloitha-status" class="status-indicator status-online"></span>
+                    <h2>🏠 Beloit HA (Tailscale)</h2>
+                </div>
+                <div id="beloitha-content">
+                    <div class="metric"><span class="metric-label">Status</span><span class="metric-value" id="beloitha-status-text">--</span></div>
+                    <div class="metric"><span class="metric-label">Entities</span><span class="metric-value" id="beloitha-entities">--</span></div>
+                </div>
+            </div>
+
+            <!-- Beloit Orange Pi 5 Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span id="beloitorange-status" class="status-indicator status-online"></span>
+                    <h2>🍊 BeloitOrangePi5 (Tailscale)</h2>
+                </div>
+                <div id="beloitorange-content">
+                    <div class="metric"><span class="metric-label">Status</span><span class="metric-value" id="beloitorange-status-text">--</span></div>
+                    <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value" id="beloitorange-uptime">--</span></div>
+                    <div class="metric"><span class="metric-label">CPU Usage</span><span class="metric-value" id="beloitorange-cpu">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-cpu" id="beloitorange-cpu-bar" style="width: 0%"></div></div>
+                    <div class="metric"><span class="metric-label">Memory Usage</span><span class="metric-value" id="beloitorange-mem">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-mem" id="beloitorange-mem-bar" style="width: 0%"></div></div>
+                    <hr style="border-color: rgba(255,255,255,0.1); margin: 15px 0;">
+                    <div class="metric"><span class="metric-label">Docker Containers</span><span class="metric-value" id="beloitorange-docker-count">--</span></div>
+                    <div id="beloitorange-docker-list"></div>
+                </div>
+            </div>
+
+            <!-- FarmPi Status -->
+            <div class="card">
+                <div class="card-header">
+                    <span id="farmpi-status" class="status-indicator status-online"></span>
+                    <h2>🌾 FarmPi (Tailscale)</h2>
+                </div>
+                <div id="farmpi-content">
+                    <div class="metric"><span class="metric-label">Status</span><span class="metric-value" id="farmpi-status-text">--</span></div>
+                    <div class="metric"><span class="metric-label">Uptime</span><span class="metric-value" id="farmpi-uptime">--</span></div>
+                    <div class="metric"><span class="metric-label">CPU Usage</span><span class="metric-value" id="farmpi-cpu">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-cpu" id="farmpi-cpu-bar" style="width: 0%"></div></div>
+                    <div class="metric"><span class="metric-label">Memory Usage</span><span class="metric-value" id="farmpi-mem">--%</span></div>
+                    <div class="progress-bar"><div class="progress-fill progress-mem" id="farmpi-mem-bar" style="width: 0%"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function updateAll() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                // BotVM Status (Combined)
+                if (data.botvm) {
+                    document.getElementById('uptime').textContent = data.botvm.uptime || '--';
+                    document.getElementById('cpu-percent').textContent = `${data.botvm.cpu}%`;
+                    document.getElementById('cpu-bar').style.width = `${Math.min(data.botvm.cpu, 100)}%`;
+                    document.getElementById('mem-percent').textContent = `${data.botvm.memory}%`;
+                    document.getElementById('mem-bar').style.width = `${Math.min(data.botvm.memory, 100)}%`;
+                    document.getElementById('disk-percent').textContent = `${data.botvm.disk}%`;
+                    document.getElementById('disk-bar').style.width = `${Math.min(data.botvm.disk, 100)}%`;
+                    document.getElementById('load-avg').textContent = data.botvm.load_avg || '--';
+                    if (data.docker) {
+                        document.getElementById('docker-count').textContent = data.docker.count;
+                        const listDiv = document.getElementById('docker-list');
+                        listDiv.innerHTML = '';
+                        data.docker.containers.forEach(c => {
+                            const div = document.createElement('div');
+                            div.className = 'metric';
+                            div.innerHTML = `<span class="metric-label">${c.name}</span><span class="metric-value">${c.status}</span>`;
+                            listDiv.appendChild(div);
+                        });
+                    }
+                }
+
+                // Home Assistant Status
+                if (data.homeassistant) {
+                    const ha = data.homeassistant;
+                    document.getElementById('ha-status-text').textContent = ha.online ? '✅ Online' : '❌ Offline';
+                    document.getElementById('ha-status').className = `status-indicator status-${ha.online ? 'online' : 'offline'}`;
+                    document.getElementById('ha-entities').textContent = ha.entities || '--';
+                    document.getElementById('ha-devices').textContent = ha.active_devices || '--';
+                }
+
+                // PFSense Status
+                if (data.pfsense) {
+                    const pfs = data.pfsense;
+                    document.getElementById('pfs-status-text').textContent = pfs.online ? '✅ Online' : '❌ Offline';
+                    document.getElementById('pfs-status').className = `status-indicator status-${pfs.online ? 'online' : 'offline'}`;
+                    document.getElementById('pfs-wan-ip').textContent = pfs.wan_ip || '--';
+                }
+
+                // TexasServerARM Status
+                if (data.texasarm) {
+                    const arm = data.texasarm;
+                    document.getElementById('texasarm-status-text').textContent = arm.online ? '✅ Online' : '❌ Offline';
+                    document.getElementById('texasarm-status').className = `status-indicator status-${arm.online ? 'online' : 'offline'}`;
+                    if (arm.uptime) {
+                        document.getElementById('texasarm-uptime').textContent = arm.uptime;
+                    }
+                    if (arm.cpu !== undefined) {
+                        document.getElementById('texasarm-cpu').textContent = `${arm.cpu}%`;
+                        document.getElementById('texasarm-cpu-bar').style.width = `${Math.min(arm.cpu, 100)}%`;
+                    }
+                    if (arm.memory !== undefined) {
+                        document.getElementById('texasarm-mem').textContent = `${arm.memory}%`;
+                        document.getElementById('texasarm-mem-bar').style.width = `${Math.min(arm.memory, 100)}%`;
+                    }
+                    if (arm.docker_count !== undefined) {
+                        document.getElementById('texasarm-docker-count').textContent = arm.docker_count;
+                    }
+                    const dockerListDiv = document.getElementById('texasarm-docker-list');
+                    dockerListDiv.innerHTML = '';
+                    if (arm.docker_containers && arm.docker_containers.length > 0) {
+                        arm.docker_containers.forEach(c => {
+                            const div = document.createElement('div');
+                            div.className = 'metric';
+                            div.innerHTML = `<span class="metric-label">${c.name}</span><span class="metric-value">${c.status}</span>`;
+                            dockerListDiv.appendChild(div);
+                        });
+                    }
+                }
+
+                // Beloit Proxmox Status
+                if (data.beloitproxmox) {
+                    const px = data.beloitproxmox;
+                    document.getElementById('proxmox-status-text').textContent = px.online ? '✅ Online' : '❌ Offline';
+                    document.getElementById('proxmox-status').className = `status-indicator status-${px.online ? 'online' : 'offline'}`;
+                    if (px.uptime) {
+                        document.getElementById('proxmox-uptime').textContent = px.uptime;
+                    }
+                    if (px.cpu !== undefined) {
+                        document.getElementById('proxmox-cpu').textContent = `${px.cpu}%`;
+                        document.getElementById('proxmox-cpu-bar').style.width = `${Math.min(px.cpu, 100)}%`;
+                    }
+                    if (px.memory !== undefined) {
+                        document.getElementById('proxmox-mem').textContent = `${px.memory}%`;
+                        document.getElementById('proxmox-mem-bar').style.width = `${Math.min(px.memory, 100)}%`;
+                    }
+                    if (px.vm_count !== undefined) {
+                        document.getElementById('proxmox-vm-count').textContent = px.vm_count;
+                    }
+                    const vmListDiv = document.getElementById('proxmox-vm-list');
+                    vmListDiv.innerHTML = '';
+                    if (px.vms && px.vms.length > 0) {
+                        px.vms.forEach(vm => {
+                            const div = document.createElement('div');
+                            div.className = 'metric';
+                            div.innerHTML = `<span class="metric-label">VM ${vm.vmid}</span><span class="metric-value">${vm.name}</span>`;
+                            vmListDiv.appendChild(div);
+                        });
+                    }
+                }
+
+                // TexasProxMox Status
+                if (data.texasproxmox) {
+                    const txpx = data.texasproxmox;
+                    document.getElementById('texasproxmox-status-text').textContent = txpx.online ? '✅ Online' : '❌ Offline';
+                    document.getElementById('texasproxmox-status').className = `status-indicator status-${txpx.online ? 'online' : 'offline'}`;
+                    if (txpx.uptime) {
+                        document.getElementById('texasproxmox-uptime').textContent = txpx.uptime;
+                    }
+                    if (txpx.cpu !== undefined) {
+                        document.getElementById('texasproxmox-cpu').textContent = `${txpx.cpu}%`;
+                        document.getElementById('texasproxmox-cpu-bar').style.width = `${Math.min(txpx.cpu, 100)}%`;
+                    }
+                    if (txpx.memory !== undefined) {
+                        document.getElementById('texasproxmox-mem').textContent = `${txpx.memory}%`;
+                        document.getElementById('texasproxmox-mem-bar').style.width = `${Math.min(txpx.memory, 100)}%`;
+                    }
+                    if (txpx.vm_count !== undefined) {
+                        document.getElementById('texasproxmox-vm-count').textContent = txpx.vm_count;
+                    }
+                    const vmListDiv = document.getElementById('texasproxmox-vm-list');
+                    vmListDiv.innerHTML = '';
+                    if (txpx.vms && txpx.vms.length > 0) {
+                        txpx.vms.forEach(vm => {
+                            const div = document.createElement('div');
+                            div.className = 'metric';
+                            div.innerHTML = `<span class="metric-label">VM ${vm.vmid}</span><span class="metric-value">${vm.name}</span>`;
+                            vmListDiv.appendChild(div);
+                        });
+                    }
+                }
+
+                // Beloit HA Status
+                if (data.beloitha) {
+                    const bha = data.beloitha;
+                    document.getElementById('beloitha-status-text').textContent = bha.online ? '✅ Online' : '❌ Offline';
+                    document.getElementById('beloitha-status').className = `status-indicator status-${bha.online ? 'online' : 'offline'}`;
+                    document.getElementById('beloitha-entities').textContent = bha.entities || '--';
+                }
+
+                // Beloit Orange Pi 5 Status
+                if (data.beloitorange) {
+                    const orange = data.beloitorange;
+                    document.getElementById('beloitorange-status-text').textContent = orange.online ? '✅ Online' : '❌ Offline';
+                    document.getElementById('beloitorange-status').className = `status-indicator status-${orange.online ? 'online' : 'offline'}`;
+                    if (orange.uptime) {
+                        document.getElementById('beloitorange-uptime').textContent = orange.uptime;
+                    }
+                    if (orange.cpu !== undefined) {
+                        document.getElementById('beloitorange-cpu').textContent = `${orange.cpu}%`;
+                        document.getElementById('beloitorange-cpu-bar').style.width = `${Math.min(orange.cpu, 100)}%`;
+                    }
+                    if (orange.memory !== undefined) {
+                        document.getElementById('beloitorange-mem').textContent = `${orange.memory}%`;
+                        document.getElementById('beloitorange-mem-bar').style.width = `${Math.min(orange.memory, 100)}%`;
+                    }
+                    if (orange.docker_count !== undefined) {
+                        document.getElementById('beloitorange-docker-count').textContent = orange.docker_count;
+                    }
+                    const dockerListDiv = document.getElementById('beloitorange-docker-list');
+                    dockerListDiv.innerHTML = '';
+                    if (orange.docker_containers && orange.docker_containers.length > 0) {
+                        orange.docker_containers.forEach(c => {
+                            const div = document.createElement('div');
+                            div.className = 'metric';
+                            div.innerHTML = `<span class="metric-label">${c.name}</span><span class="metric-value">${c.status}</span>`;
+                            dockerListDiv.appendChild(div);
+                        });
+                    }
+                }
+
+                // FarmPi Status
+                if (data.farmpi) {
+                    const farm = data.farmpi;
+                    document.getElementById('farmpi-status-text').textContent = farm.online ? '✅ Online' : '❌ Offline';
+                    document.getElementById('farmpi-status').className = `status-indicator status-${farm.online ? 'online' : 'offline'}`;
+                    if (farm.uptime) {
+                        document.getElementById('farmpi-uptime').textContent = farm.uptime;
+                    }
+                    if (farm.cpu !== undefined) {
+                        document.getElementById('farmpi-cpu').textContent = `${farm.cpu}%`;
+                        document.getElementById('farmpi-cpu-bar').style.width = `${Math.min(farm.cpu, 100)}%`;
+                    }
+                    if (farm.memory !== undefined) {
+                        document.getElementById('farmpi-mem').textContent = `${farm.memory}%`;
+                        document.getElementById('farmpi-mem-bar').style.width = `${Math.min(farm.memory, 100)}%`;
+                    }
+                }
+            } catch (e) {
+                console.error('Update error:', e);
+            }
+        }
+
+        // Initial load and auto-refresh every 10 seconds
+        updateAll();
+        setInterval(updateAll, 10000);
+    </script>
+</body>
+</html>
+'''
+
+@app.route('/')
+def dashboard():
+    return render_template_string(DASHBOARD_HTML)
+
+@app.route('/api/status')
+def get_status():
+    status = {}
+    
+    # BotVM Status
+    try:
+        # Uptime
+        result = subprocess.run(['uptime', '-s'], capture_output=True, text=True)
+        uptime_start = result.stdout.strip()
+        from datetime import datetime
+        start_time = datetime.strptime(uptime_start, '%Y-%m-%d %H:%M')
+        uptime_seconds = int((datetime.now() - start_time).total_seconds())
+        days = uptime_seconds // 86400
+        hours = (uptime_seconds % 86400) // 3600
+        status['botvm'] = {'uptime': f'{days}d {hours}h'}
+    except:
+        status['botvm'] = {}
+    
+    try:
+        # Load average
+        with open('/proc/loadavg', 'r') as f:
+            load_avg = f.read().split()[:3]
+            status['botvm']['load_avg'] = ', '.join(load_avg)
+    except:
+        pass
+    
+    try:
+        # CPU usage from /proc/stat
+        def get_cpu_usage():
+            with open('/proc/stat', 'r') as f:
+                line = f.readline()
+            values = line.split()[1:8]
+            values = [int(v) for v in values]
+            idle = values[3]
+            total = sum(values)
+            return 100 - (idle * 100 // total)
+        
+        cpu1 = get_cpu_usage()
+        import time
+        time.sleep(0.5)
+        cpu2 = get_cpu_usage()
+        status['botvm']['cpu'] = max(cpu1, cpu2)
+    except:
+        status['botvm']['cpu'] = 0
+    
+    try:
+        # Memory usage
+        result = subprocess.run(['free', '-m'], capture_output=True, text=True)
+        lines = result.stdout.strip().split('\n')
+        mem_parts = lines[1].split()
+        total_mem = int(mem_parts[1])
+        used_mem = int(mem_parts[2])
+        status['botvm']['memory'] = (used_mem * 100 // total_mem)
+    except:
+        pass
+    
+    try:
+        # Disk usage
+        result = subprocess.run(['df', '-h', '/'], capture_output=True, text=True)
+        lines = result.stdout.strip().split('\n')
+        disk_parts = lines[1].split()
+        status['botvm']['disk'] = int(disk_parts[4].replace('%', ''))
+    except:
+        pass
+    
+    # Home Assistant Status (API check with token)
+    try:
+        headers = {'Authorization': f'Bearer {CONFIG["homeassistant"]["token"]}'} if CONFIG['homeassistant']['token'] else {}
+        response = requests.get(f'http://{CONFIG["homeassistant"]["ip"]}:{CONFIG["homeassistant"]["port"]}/api/states', headers=headers, timeout=3)
+        entities = response.json()
+        active_devices = len([e for e in entities if e['state'] == 'on' or e['state'] != 'off'])
+        status['homeassistant'] = {
+            'online': True,
+            'entities': len(entities),
+            'active_devices': active_devices
+        }
+    except:
+        status['homeassistant'] = {'online': False}
+    
+    # PFSense Status (basic ping check)
+    try:
+        result = subprocess.run(['ping', '-c', '1', '-W', '2', CONFIG['pfsense']['ip']], capture_output=True, text=True)
+        status['pfsense'] = {'online': result.returncode == 0}
+    except:
+        status['pfsense'] = {'online': False}
+    
+    # Beloit Proxmox Status - Using paramiko for SSH
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            CONFIG['beloitproxmox']['ip'],
+            username=CONFIG['beloitproxmox']['username'],
+            password=CONFIG['beloitproxmox']['password'],
+            timeout=5
+        )
+        
+        status['beloitproxmox'] = {'online': True}
+        
+        # Get uptime
+        stdin, stdout, stderr = client.exec_command('uptime -p')
+        uptime_result = stdout.read().decode().strip()
+        status['beloitproxmox']['uptime'] = uptime_result
+        
+        # Get memory usage
+        stdin2, stdout2, stderr2 = client.exec_command('free | grep Mem')
+        mem_line = stdout2.read().decode().strip()
+        parts = mem_line.split()
+        if len(parts) >= 3:
+            mem_used = int(parts[2])
+            mem_total = int(parts[1])
+            status['beloitproxmox']['memory'] = (mem_used * 100 // mem_total)
+        
+        # Get CPU usage from /proc/loadavg
+        stdin3, stdout3, stderr3 = client.exec_command('cat /proc/loadavg')
+        load_line = stdout3.read().decode().strip()
+        load_parts = load_line.split()
+        if len(load_parts) >= 1:
+            cpu_load = float(load_parts[0])
+            status['beloitproxmox']['cpu'] = min(int(cpu_load * 25), 100)
+        
+        # Get active VMs via qm list command
+        stdin4, stdout4, stderr4 = client.exec_command('qm list | grep running')
+        vms_output = stdout4.read().decode().strip()
+        if vms_output:
+            vm_list = []
+            for line in vms_output.split('\n'):
+                parts = line.split()
+                if len(parts) >= 3:
+                    vmid = parts[0]
+                    name = parts[1] if len(parts) > 1 else 'unnamed'
+                    vm_list.append({'vmid': vmid, 'name': name})
+            status['beloitproxmox']['vms'] = vm_list
+            status['beloitproxmox']['vm_count'] = len(vm_list)
+        
+        client.close()
+    except Exception as e:
+        status['beloitproxmox'] = {'online': False}
+    
+    # Beloit HA Status
+    try:
+        headers = {'Authorization': f'Bearer {CONFIG["beloitha"]["token"]}'} if CONFIG['beloitha']['token'] else {}
+        response = requests.get(f'http://{CONFIG["beloitha"]["ip"]}:{CONFIG["beloitha"]["port"]}/api/states', headers=headers, timeout=3)
+        entities = response.json()
+        status['beloitha'] = {'online': True, 'entities': len(entities)}
+    except:
+        status['beloitha'] = {'online': False}
+    
+    # TexasServerARM Status - Using paramiko for SSH
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            CONFIG['texasarm']['ip'],
+            username=CONFIG['texasarm']['username'],
+            password=CONFIG['texasarm']['password'],
+            timeout=5
+        )
+        
+        status['texasarm'] = {'online': True}
+        
+        # Get uptime
+        stdin, stdout, stderr = client.exec_command('uptime -p')
+        uptime_result = stdout.read().decode().strip()
+        status['texasarm']['uptime'] = uptime_result
+        
+        # Get memory usage
+        stdin2, stdout2, stderr2 = client.exec_command('free | grep Mem')
+        mem_line = stdout2.read().decode().strip()
+        parts = mem_line.split()
+        if len(parts) >= 3:
+            mem_used = int(parts[2])
+            mem_total = int(parts[1])
+            status['texasarm']['memory'] = (mem_used * 100 // mem_total)
+        
+        # Get CPU usage from /proc/loadavg
+        stdin3, stdout3, stderr3 = client.exec_command('cat /proc/loadavg')
+        load_line = stdout3.read().decode().strip()
+        load_parts = load_line.split()
+        if len(load_parts) >= 1:
+            cpu_load = float(load_parts[0])
+            status['texasarm']['cpu'] = min(int(cpu_load * 25), 100)
+        
+        # Get docker containers
+        stdin4, stdout4, stderr4 = client.exec_command('docker ps --format "{{.Names}}\t{{.Status}}"')
+        containers_output = stdout4.read().decode().strip()
+        if containers_output:
+            container_list = []
+            for line in containers_output.split('\n'):
+                parts = line.split('\t')
+                if len(parts) >= 2:
+                    container_list.append({'name': parts[0], 'status': parts[1]})
+            status['texasarm']['docker_count'] = len(container_list)
+            status['texasarm']['docker_containers'] = container_list
+        
+        client.close()
+    except Exception as e:
+        status['texasarm'] = {'online': False}
+    
+    # TexasProxMox Status - Using paramiko for SSH
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            CONFIG['texasproxmox']['ip'],
+            username=CONFIG['texasproxmox']['username'],
+            password=CONFIG['texasproxmox']['password'],
+            timeout=5
+        )
+        
+        status['texasproxmox'] = {'online': True}
+        
+        # Get uptime
+        stdin, stdout, stderr = client.exec_command('uptime -p')
+        uptime_result = stdout.read().decode().strip()
+        status['texasproxmox']['uptime'] = uptime_result
+        
+        # Get memory usage
+        stdin2, stdout2, stderr2 = client.exec_command('free | grep Mem')
+        mem_line = stdout2.read().decode().strip()
+        parts = mem_line.split()
+        if len(parts) >= 3:
+            mem_used = int(parts[2])
+            mem_total = int(parts[1])
+            status['texasproxmox']['memory'] = (mem_used * 100 // mem_total)
+        
+        # Get CPU usage from /proc/loadavg
+        stdin3, stdout3, stderr3 = client.exec_command('cat /proc/loadavg')
+        load_line = stdout3.read().decode().strip()
+        load_parts = load_line.split()
+        if len(load_parts) >= 1:
+            cpu_load = float(load_parts[0])
+            status['texasproxmox']['cpu'] = min(int(cpu_load * 25), 100)
+        
+        # Get active VMs via qm list command
+        stdin4, stdout4, stderr4 = client.exec_command('qm list | grep running')
+        vms_output = stdout4.read().decode().strip()
+        if vms_output:
+            vm_list = []
+            for line in vms_output.split('\n'):
+                parts = line.split()
+                if len(parts) >= 3:
+                    vmid = parts[0]
+                    name = parts[1] if len(parts) > 1 else 'unnamed'
+                    vm_list.append({'vmid': vmid, 'name': name})
+            status['texasproxmox']['vms'] = vm_list
+            status['texasproxmox']['vm_count'] = len(vm_list)
+        
+        client.close()
+    except Exception as e:
+        status['texasproxmox'] = {'online': False}
+    
+    # Beloit Orange Pi 5 Status - Using paramiko for SSH
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            CONFIG['beloitorange']['ip'],
+            username=CONFIG['beloitorange']['username'],
+            password=CONFIG['beloitorange']['password'],
+            timeout=5
+        )
+        
+        status['beloitorange'] = {'online': True}
+        
+        # Get uptime
+        stdin, stdout, stderr = client.exec_command('uptime -p')
+        uptime_result = stdout.read().decode().strip()
+        status['beloitorange']['uptime'] = uptime_result
+        
+        # Get memory usage
+        stdin2, stdout2, stderr2 = client.exec_command('free | grep Mem')
+        mem_line = stdout2.read().decode().strip()
+        parts = mem_line.split()
+        if len(parts) >= 3:
+            mem_used = int(parts[2])
+            mem_total = int(parts[1])
+            status['beloitorange']['memory'] = (mem_used * 100 // mem_total)
+        
+        # Get CPU usage from /proc/loadavg
+        stdin3, stdout3, stderr3 = client.exec_command('cat /proc/loadavg')
+        load_line = stdout3.read().decode().strip()
+        load_parts = load_line.split()
+        if len(load_parts) >= 1:
+            cpu_load = float(load_parts[0])
+            status['beloitorange']['cpu'] = min(int(cpu_load * 25), 100)
+        
+        # Get docker containers
+        stdin4, stdout4, stderr4 = client.exec_command('docker ps --format "{{.Names}}\t{{.Status}}"')
+        containers_output = stdout4.read().decode().strip()
+        if containers_output:
+            container_list = []
+            for line in containers_output.split('\n'):
+                parts = line.split('\t')
+                if len(parts) >= 2:
+                    container_list.append({'name': parts[0], 'status': parts[1]})
+            status['beloitorange']['docker_count'] = len(container_list)
+            status['beloitorange']['docker_containers'] = container_list
+        
+        client.close()
+    except Exception as e:
+        status['beloitorange'] = {'online': False}
+    
+    # FarmPi Status - Using paramiko for SSH
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            CONFIG['farmpi']['ip'],
+            username=CONFIG['farmpi']['username'],
+            password=CONFIG['farmpi']['password'],
+            timeout=5
+        )
+        
+        status['farmpi'] = {'online': True}
+        
+        # Get uptime
+        stdin, stdout, stderr = client.exec_command('uptime -p')
+        uptime_result = stdout.read().decode().strip()
+        status['farmpi']['uptime'] = uptime_result
+        
+        # Get memory usage
+        stdin2, stdout2, stderr2 = client.exec_command('free | grep Mem')
+        mem_line = stdout2.read().decode().strip()
+        parts = mem_line.split()
+        if len(parts) >= 3:
+            mem_used = int(parts[2])
+            mem_total = int(parts[1])
+            status['farmpi']['memory'] = (mem_used * 100 // mem_total)
+        
+        # Get CPU usage from /proc/loadavg
+        stdin3, stdout3, stderr3 = client.exec_command('cat /proc/loadavg')
+        load_line = stdout3.read().decode().strip()
+        load_parts = load_line.split()
+        if len(load_parts) >= 1:
+            cpu_load = float(load_parts[0])
+            status['farmpi']['cpu'] = min(int(cpu_load * 25), 100)
+        
+        client.close()
+    except Exception as e:
+        status['farmpi'] = {'online': False}
+    
+    # Docker Status (BotVM - via curl to docker socket)
+    try:
+        result = subprocess.run(['curl', '-s', '--unix', '/var/run/docker.sock', 'http://localhost/containers/json'], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            containers = json.loads(result.stdout)
+            status['docker'] = {
+                'count': len(containers),
+                'containers': [{'name': c.get('Names', ['unknown'])[0].replace('/', ''), 'status': c.get('Status', '--')} for c in containers]
+            }
+    except:
+        pass
+    
+    return jsonify(status)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8081, debug=False)

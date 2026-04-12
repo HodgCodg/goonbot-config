@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""
+Home Assistant control skill for GoonBot.
+Talks to HA REST API at 10.11.0.173:8123.
+
+Usage:
+  python3 ha.py states [DOMAIN]          # List all entity states (or filter by domain)
+  python3 ha.py entity ENTITY_ID         # Get detailed state of one entity
+  python3 ha.py toggle ENTITY_ID         # Toggle entity
+  python3 ha.py turn_on ENTITY_ID        # Turn on entity
+  python3 ha.py turn_off ENTITY_ID       # Turn off entity
+  python3 ha.py set ENTITY_ID KEY=VAL    # Set attributes (e.g., brightness=128)
+  python3 ha.py scene SCENE_ID           # Activate a scene
+  python3 ha.py automation list          # List all automations
+  python3 ha.py automation trigger ID    # Trigger an automation
+  python3 ha.py climate ENTITY TEMP      # Set thermostat temperature
+  python3 ha.py call DOMAIN SERVICE JSON # Call any service with JSON data
+  python3 ha.py history ENTITY [HOURS]   # Get entity history (default 24h)
+  python3 ha.py config                   # Show HA config info
+  python3 ha.py setup TOKEN              # Save API token to config file
+"""
+
+import sys
+import os
+import json
+import urllib.request
+import urllib.error
+from datetime import datetime, timedelta
+
+CONFIG_FILE = os.path.expanduser("~/.config/goonbot/ha.json")
+HA_URL = "http://10.11.0.173:8123"
+
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_config(cfg):
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f)
+
+
+def get_token():
+    cfg = load_config()
+    token = cfg.get("token") or os.environ.get("HA_TOKEN")
+    if not token:
+        print("ERROR: No HA API token configured.")
+        print("Run: python3 ha.py setup YOUR_LONG_LIVED_ACCESS_TOKEN")
+        print("Generate one at: http://10.11.0.173:8123/profile/security")
+        sys.exit(1)
+    return token
+
+
+def api_request(method, path, data=None, token=None):
+    if token is None:
+        token = get_token()
+    url = f"{HA_URL}{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    body = json.dumps(data).encode() if data else None
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        print(f"ERROR: HTTP {e.code} from HA API: {body[:200]}")
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        print(f"ERROR: Cannot reach HA at {HA_URL}: {e.reason}")
+        sys.exit(1)
+
+
+def cmd_setup(token):
+    save_config({"token": token, "url": HA_URL})
+    # Verify it works
+    try:
+        result = api_request("GET", "/api/", token=token)
+        print(f"OK: Connected to Home Assistant — {result.get('message', 'API running')}")
+    except SystemExit:
+        print("WARNING: Token saved but could not verify connection.")
+
+
+def cmd_config():
+    result = api_request("GET", "/api/config")
+    print(f"Name: {result.get('location_name', 'N/A')}")
+    print(f"Version: {result.get('version', 'N/A')}")
+    print(f"Timezone: {result.get('time_zone', 'N/A')}")
+    print(f"Latitude: {result.get('latitude', 'N/A')}")
+    print(f"Longitude: {result.get('longitude', 'N/A')}")
+    print(f"Unit System: {result.get('unit_system', {}).get('temperature', 'N/A')}")
+    comps = result.get("components", [])
+    print(f"Components: {len(comps)} loaded")
+
+
+def cmd_states(domain=None):
+    states = api_request("GET", "/api/states")
+    if domain:
+        states = [s for s in states if s["entity_id"].startswith(f"{domain}.")]
+    # Group by domain
+    grouped = {}
+    for s in states:
+        d = s["entity_id"].split(".")[0]
+        grouped.setdefault(d, []).append(s)
+    for d in sorted(grouped):
+        items = grouped[d]
+        print(f"\n--- {d} ({len(items)}) ---")
+        for s in sorted(items, key=lambda x: x["entity_id"]):
+            name = s.get("attributes", {}).get("friendly_name", s["entity_id"])
+            state = s["state"]
+            print(f"  {s['entity_id']}: {state} ({name})")
+
+
+def cmd_entity(entity_id):
+    result = api_request("GET", f"/api/states/{entity_id}")
+    print(f"Entity: {result['entity_id']}")
+    print(f"State: {result['state']}")
+    print(f"Last Changed: {result.get('last_changed', 'N/A')}")
+    attrs = result.get("attributes", {})
+    if attrs:
+        print("Attributes:")
+        for k, v in sorted(attrs.items()):
+            print(f"  {k}: {v}")
+
+
+def cmd_service(domain, service, entity_id=None, extra_data=None):
+    data = {}
+    if entity_id:
+        data["entity_id"] = entity_id
+    if extra_data:
+        data.update(extra_data)
+    result = api_request("POST", f"/api/services/{domain}/{service}", data)
+    if isinstance(result, list) and result:
+        for s in result[:3]:
+            name = s.get("attributes", {}).get("friendly_name", s.get("entity_id", ""))
+            print(f"  {s.get('entity_id', '?')}: {s.get('state', '?')} ({name})")
+    else:
+        print(f"OK: {domain}/{service} called successfully")
+
+
+def cmd_toggle(entity_id):
+    domain = entity_id.split(".")[0]
+    cmd_service(domain, "toggle", entity_id)
+
+
+def cmd_turn_on(entity_id):
+    domain = entity_id.split(".")[0]
+    cmd_service(domain, "turn_on", entity_id)
+
+
+def cmd_turn_off(entity_id):
+    domain = entity_id.split(".")[0]
+    cmd_service(domain, "turn_off", entity_id)
+
+
+def cmd_set(entity_id, attrs):
+    domain = entity_id.split(".")[0]
+    extra = {}
+    for a in attrs:
+        if "=" in a:
+            k, v = a.split("=", 1)
+            try:
+                v = json.loads(v)
+            except (json.JSONDecodeError, ValueError):
+                pass
+            extra[k] = v
+    cmd_service(domain, "turn_on", entity_id, extra)
+
+
+def cmd_scene(scene_id):
+    if not scene_id.startswith("scene."):
+        scene_id = f"scene.{scene_id}"
+    cmd_service("scene", "turn_on", scene_id)
+
+
+def cmd_automation(action, auto_id=None):
+    if action == "list":
+        states = api_request("GET", "/api/states")
+        autos = [s for s in states if s["entity_id"].startswith("automation.")]
+        for a in sorted(autos, key=lambda x: x["entity_id"]):
+            name = a.get("attributes", {}).get("friendly_name", a["entity_id"])
+            print(f"  {a['entity_id']}: {a['state']} ({name})")
+    elif action == "trigger" and auto_id:
+        if not auto_id.startswith("automation."):
+            auto_id = f"automation.{auto_id}"
+        cmd_service("automation", "trigger", auto_id)
+    else:
+        print("Usage: automation list | automation trigger AUTOMATION_ID")
+
+
+def cmd_climate(entity_id, temp):
+    if not entity_id.startswith("climate."):
+        entity_id = f"climate.{entity_id}"
+    cmd_service("climate", "set_temperature", entity_id, {"temperature": float(temp)})
+    print(f"Thermostat {entity_id} set to {temp}")
+
+
+def cmd_call(domain, service, json_str):
+    try:
+        data = json.loads(json_str)
+    except json.JSONDecodeError:
+        print(f"ERROR: Invalid JSON: {json_str}")
+        sys.exit(1)
+    result = api_request("POST", f"/api/services/{domain}/{service}", data)
+    print(json.dumps(result, indent=2)[:2000] if result else "OK")
+
+
+def cmd_history(entity_id, hours=24):
+    end = datetime.utcnow()
+    start = end - timedelta(hours=int(hours))
+    ts = start.strftime("%Y-%m-%dT%H:%M:%S")
+    result = api_request("GET", f"/api/history/period/{ts}?filter_entity_id={entity_id}&minimal_response")
+    if result and isinstance(result, list) and result[0]:
+        entries = result[0]
+        print(f"History for {entity_id} (last {hours}h, {len(entries)} entries):")
+        for e in entries[-15:]:  # Last 15 entries
+            t = e.get("last_changed", "?")[:19]
+            print(f"  {t}: {e.get('state', '?')}")
+    else:
+        print(f"No history found for {entity_id}")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(0)
+
+    cmd = sys.argv[1].lower()
+
+    if cmd == "setup" and len(sys.argv) >= 3:
+        cmd_setup(sys.argv[2])
+    elif cmd == "config":
+        cmd_config()
+    elif cmd == "states":
+        cmd_states(sys.argv[2] if len(sys.argv) > 2 else None)
+    elif cmd == "entity" and len(sys.argv) >= 3:
+        cmd_entity(sys.argv[2])
+    elif cmd == "toggle" and len(sys.argv) >= 3:
+        cmd_toggle(sys.argv[2])
+    elif cmd == "turn_on" and len(sys.argv) >= 3:
+        cmd_turn_on(sys.argv[2])
+    elif cmd == "turn_off" and len(sys.argv) >= 3:
+        cmd_turn_off(sys.argv[2])
+    elif cmd == "set" and len(sys.argv) >= 4:
+        cmd_set(sys.argv[2], sys.argv[3:])
+    elif cmd == "scene" and len(sys.argv) >= 3:
+        cmd_scene(sys.argv[2])
+    elif cmd == "automation" and len(sys.argv) >= 3:
+        cmd_automation(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    elif cmd == "climate" and len(sys.argv) >= 4:
+        cmd_climate(sys.argv[2], sys.argv[3])
+    elif cmd == "call" and len(sys.argv) >= 5:
+        cmd_call(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif cmd == "history" and len(sys.argv) >= 3:
+        cmd_history(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else 24)
+    else:
+        print(__doc__)
+
+
+if __name__ == "__main__":
+    main()
