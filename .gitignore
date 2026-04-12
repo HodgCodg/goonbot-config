@@ -1,0 +1,11 @@
+# Git Ignore for GoonBot Workspace
+.env
+*.log
+*.zip
+*.bak
+__pycache__/
+*.pyc
+entities.json
+long_term_memory.json
+.openclaw/
+vault/
